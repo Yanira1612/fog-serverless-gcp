@@ -1,0 +1,4 @@
+name: crowd-edge-cloud
+runtime:
+  name: python
+description: Infraestructura serverless Fog -> Cloud Run -> Pub/Sub -> Firestore en GCP.

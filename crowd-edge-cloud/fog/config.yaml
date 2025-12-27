@@ -1,0 +1,12 @@
+# Configuración para la simulación de eventos en el borde
+endpoint: "https://fog-ingestion-<hash>-uc.a.run.app/events"  # URL de Cloud Run
+send_interval_seconds: 5
+retry_interval_seconds: 10
+buffer_file: "./fog_buffer/events_pending.jsonl"
+camera_ids:
+  - "cam-entrance"
+  - "cam-lobby"
+  - "cam-parking"
+thresholds:
+  people_high: 50
+  rapid_accumulation: 20

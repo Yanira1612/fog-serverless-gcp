@@ -1,0 +1,48 @@
+steps:
+  # Paso 1: ejecutar Pulumi para asegurar infraestructura base (topic, SA, Cloud Run, Firestore)
+  - name: pulumi/pulumi
+    entrypoint: pulumi
+    args: ["up", "--yes", "--cwd", "infra"]
+    env:
+      - "PULUMI_CONFIG_PASSPHRASE="
+
+  # Paso 2: construir y publicar la imagen de Cloud Run
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - "-t"
+      - "gcr.io/fog-serverless/fog-ingestion:latest"
+      - "./services/ingest"
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - "gcr.io/fog-serverless/fog-ingestion:latest"
+
+  # Paso 3: desplegar el servicio Cloud Run usando la imagen recién publicada
+  - name: gcr.io/cloud-builders/gcloud
+    args:
+      - run
+      - deploy
+      - fog-ingestion
+      - "--image=gcr.io/fog-serverless/fog-ingestion:latest"
+      - "--region=us-central1"
+      - "--project=fog-serverless"
+      - "--allow-unauthenticated"
+
+  # Paso 4: desplegar la Cloud Function (2nd gen) suscrita al topic fog-events
+  - name: gcr.io/cloud-builders/gcloud
+    args:
+      - functions
+      - deploy
+      - fog-processor
+      - "--gen2"
+      - "--region=us-central1"
+      - "--project=fog-serverless"
+      - "--runtime=python311"
+      - "--entry-point=process_event"
+      - "--trigger-topic=fog-events"
+      - "--source=functions/processor"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
