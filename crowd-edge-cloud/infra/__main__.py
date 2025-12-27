@@ -5,6 +5,12 @@ import pulumi_gcp as gcp
 project = "fog-serverless"
 region = "us-central1"
 
+# Configuración de imagen: solo Artifact Registry. Se permite sobreescribir la etiqueta vía config.
+config = pulumi.Config()
+image_tag = config.get("imageTag") or "latest"
+image_base = "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion"
+container_image = f"{image_base}:{image_tag}"
+
 # Tema de Pub/Sub para los eventos provenientes del fog
 topic = gcp.pubsub.Topic(
     "fog-events",
@@ -30,7 +36,7 @@ cloud_run_service = gcp.cloudrunv2.Service(
         service_account=service_account.email,
         containers=[
             gcp.cloudrunv2.ServiceTemplateContainerArgs(
-                image="gcr.io/fog-serverless/fog-ingestion:latest",
+                image=container_image,
                 ports=[
                     gcp.cloudrunv2.ServiceTemplateContainerPortArgs(
                         container_port=8080,

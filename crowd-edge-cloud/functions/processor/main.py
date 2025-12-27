@@ -67,6 +67,11 @@ def process_event(event: Dict[str, Any], context: Any) -> None:
         logger.error("No se pudo decodificar el mensaje: %s", err)
         return
 
+    required = ("event_id", "camera_id", "event_type")
+    if any(key not in payload for key in required):
+        logger.error("Evento inválido, faltan campos requeridos: %s", required)
+        return
+
     transaction = db.transaction()
     inserted = False
     try:

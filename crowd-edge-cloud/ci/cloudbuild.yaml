@@ -1,48 +1,43 @@
 steps:
-  # Paso 1: ejecutar Pulumi para asegurar infraestructura base (topic, SA, Cloud Run, Firestore)
-  - name: pulumi/pulumi
-    entrypoint: pulumi
-    args: ["up", "--yes", "--cwd", "infra"]
-    env:
-      - "PULUMI_CONFIG_PASSPHRASE="
-
-  # Paso 2: construir y publicar la imagen de Cloud Run
+  # Paso 1: construir y publicar la imagen en Artifact Registry con la etiqueta del build
   - name: gcr.io/cloud-builders/docker
     args:
       - build
       - "-t"
-      - "gcr.io/fog-serverless/fog-ingestion:latest"
+      - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:${BUILD_ID}"
+      - "-t"
+      - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:latest"
       - "./services/ingest"
 
   - name: gcr.io/cloud-builders/docker
     args:
       - push
-      - "gcr.io/fog-serverless/fog-ingestion:latest"
+      - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:${BUILD_ID}"
 
-  # Paso 3: desplegar el servicio Cloud Run usando la imagen recién publicada
-  - name: gcr.io/cloud-builders/gcloud
+  - name: gcr.io/cloud-builders/docker
     args:
-      - run
-      - deploy
-      - fog-ingestion
-      - "--image=gcr.io/fog-serverless/fog-ingestion:latest"
-      - "--region=us-central1"
-      - "--project=fog-serverless"
-      - "--allow-unauthenticated"
+      - push
+      - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:latest"
 
-  # Paso 4: desplegar la Cloud Function (2nd gen) suscrita al topic fog-events
-  - name: gcr.io/cloud-builders/gcloud
+  # Paso 2: actualizar configuración de Pulumi para apuntar a la imagen recién construida
+  - name: pulumi/pulumi
+    entrypoint: pulumi
     args:
-      - functions
-      - deploy
-      - fog-processor
-      - "--gen2"
-      - "--region=us-central1"
-      - "--project=fog-serverless"
-      - "--runtime=python311"
-      - "--entry-point=process_event"
-      - "--trigger-topic=fog-events"
-      - "--source=functions/processor"
+      - config
+      - set
+      - imageTag
+      - "${BUILD_ID}"
+      - "--cwd"
+      - "infra"
+    env:
+      - "PULUMI_CONFIG_PASSPHRASE="
+
+  # Paso 3: aplicar infraestructura con Pulumi (única fuente de verdad)
+  - name: pulumi/pulumi
+    entrypoint: pulumi
+    args: ["up", "--yes", "--cwd", "infra"]
+    env:
+      - "PULUMI_CONFIG_PASSPHRASE="
 
 options:
   logging: CLOUD_LOGGING_ONLY
