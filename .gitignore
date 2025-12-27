@@ -20,6 +20,8 @@ pubsub_proto/
 *key.json
 service-account.json
 gcp-key.json
+Pulumi.*.yaml
+
 
 # --- OS ---
 .DS_Store
