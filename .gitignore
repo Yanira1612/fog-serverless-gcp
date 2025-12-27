@@ -1,0 +1,25 @@
+# --- Python ---
+__pycache__/
+*.pyc
+venv/
+.venv/
+.env
+
+# --- Node / Javascript ---
+node_modules/
+dist/
+
+# --- Pulumi ---
+# Ignora binarios y logs de pulumi, pero MANTÉN los .yaml de configuración
+.pulumi/
+pubsub_proto/
+
+# --- Google Cloud & Seguridad (MUY IMPORTANTE) ---
+# Bloquea cualquier archivo json que pueda ser una llave
+*creds.json
+*key.json
+service-account.json
+gcp-key.json
+
+# --- OS ---
+.DS_Store

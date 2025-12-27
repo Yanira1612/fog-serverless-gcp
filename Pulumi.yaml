@@ -1,0 +1,10 @@
+name: fog-serverless
+description: Fog + Serverless architecture in GCP using Pulumi
+runtime:
+  name: nodejs
+  options:
+    packagemanager: npm
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: gcp-typescript
