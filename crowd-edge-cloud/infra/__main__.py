@@ -1,15 +1,14 @@
 import pulumi
 import pulumi_gcp as gcp
 
-# Configuración fija del proyecto y región en GCP
+# Configuracion fija del proyecto y la region en GCP
 project = "fog-serverless"
 region = "us-central1"
 
-# Configuración de imagen: solo Artifact Registry. Se permite sobreescribir la etiqueta vía config.
-config = pulumi.Config()
-image_tag = config.get("imageTag") or "latest"
-image_base = "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion"
-container_image = f"{image_base}:{image_tag}"
+# Imagen en Artifact Registry (etiqueta fija latest)
+container_image = (
+    "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:latest"
+)
 
 # Tema de Pub/Sub para los eventos provenientes del fog
 topic = gcp.pubsub.Topic(
@@ -26,28 +25,29 @@ service_account = gcp.serviceaccount.Account(
     project=project,
 )
 
-# Servicio Cloud Run que recibirá eventos HTTP del fog y los publicará en Pub/Sub
-cloud_run_service = gcp.cloudrunv2.Service(
+# Servicio Cloud Run (v1) que recibe eventos HTTP del fog
+cloud_run_service = gcp.cloudrun.Service(
     "fog-ingestion",
-    name="fog-ingestion",
     location=region,
     project=project,
-    template=gcp.cloudrunv2.ServiceTemplateArgs(
-        service_account=service_account.email,
-        containers=[
-            gcp.cloudrunv2.ServiceTemplateContainerArgs(
-                image=container_image,
-                ports=[
-                    gcp.cloudrunv2.ServiceTemplateContainerPortArgs(
-                        container_port=8080,
-                    )
-                ],
-            )
-        ],
+    template=gcp.cloudrun.ServiceTemplateArgs(
+        spec=gcp.cloudrun.ServiceTemplateSpecArgs(
+            service_account_name=service_account.email,
+            containers=[
+                gcp.cloudrun.ServiceTemplateSpecContainerArgs(
+                    image=container_image,
+                    ports=[
+                        gcp.cloudrun.ServiceTemplateSpecContainerPortArgs(
+                            container_port=8080
+                        )
+                    ],
+                )
+            ],
+        )
     ),
 )
 
-# Permiso para invocación pública del servicio Cloud Run
+# Permiso para invocacion publica del servicio Cloud Run
 public_invoker = gcp.cloudrun.IamMember(
     "fog-ingestion-invoker",
     service=cloud_run_service.name,
@@ -74,18 +74,19 @@ firestore_db = gcp.firestore.Database(
     concurrency_mode="OPTIMISTIC",
 )
 
-# Suscripción push que reenvía mensajes de Pub/Sub al endpoint del servicio Cloud Run
+# Suscripcion push que reenvia mensajes de Pub/Sub al endpoint del servicio Cloud Run
 subscription = gcp.pubsub.Subscription(
     "fog-events-subscription",
     name="fog-events-subscription",
     project=project,
     topic=topic.name,
     push_config=gcp.pubsub.SubscriptionPushConfigArgs(
-        push_endpoint=cloud_run_service.uri.apply(lambda uri: f"{uri}/events"),
+        push_endpoint=cloud_run_service.statuses.apply(
+            lambda statuses: f"{statuses[0]['url']}/events" if statuses else None
+        ),
     ),
 )
 
-# Exportes principales para referencia rápida
-pulumi.export("cloud_run_url", cloud_run_service.uri)
-pulumi.export("topic_name", topic.name)
-pulumi.export("firestore_db", firestore_db.name)
+# Exportes principales para referencia rapida
+pulumi.export("cloudRunUrl", cloud_run_service.statuses.apply(lambda s: s[0]["url"]))
+pulumi.export("topicName", topic.name)
