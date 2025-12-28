@@ -1,19 +1,27 @@
 # Configuración para la simulación de eventos en el borde
-endpoint: "https://fog-ingestion-6c41198-5v357siqga-uc.a.run.app/events"  # URL de Cloud Run
+endpoint: "https://fog-ingestion-ceba1ca-5v357siqga-uc.a.run.app/events"  # Reemplazar con URL real de Cloud Run
+api_key: "fog-secret-123"
 
-# 2. LA IP DE TU CELULAR (IP Webcam)
-# Si quisieras usar la webcam de la laptop, pondrías: camera_source: 0
-camera_source: "http://192.168.18.46:8080/video"
+# Modo de operación:
+# - simulated: genera eventos aleatorios (rápido para demo)
+# - camera: usa cámara/stream + YOLO si está instalado (cv2, ultralytics)
+mode: "simulated"
 
+# Solo para modo camera
+camera_source: 0           # 0 para webcam local, o URL rtsp/http
+camera_id: "cam-webcam-1"
+min_interval_seconds: 5    # anti-spam entre alertas
 
+# Para ambos modos
 send_interval_seconds: 5
 retry_interval_seconds: 10
 buffer_file: "./fog_buffer/events_pending.jsonl"
 
 camera_ids:
-  - "CAM-CELULAR-01"
-
+  - "cam-entrance"
+  - "cam-lobby"
+  - "cam-parking"
 
 thresholds:
   people_high: 50
-  rapid_accumulation: 3
+  rapid_accumulation: 20

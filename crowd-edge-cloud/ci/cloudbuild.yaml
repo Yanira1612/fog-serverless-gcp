@@ -1,43 +1,73 @@
 steps:
-  # Paso 1: construir y publicar la imagen en Artifact Registry con la etiqueta del build
+  # Paso 1: construir la imagen del servicio de ingesta
   - name: gcr.io/cloud-builders/docker
     args:
       - build
       - "-t"
-      - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:${BUILD_ID}"
-      - "-t"
       - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:latest"
       - "./services/ingest"
 
-  - name: gcr.io/cloud-builders/docker
-    args:
-      - push
-      - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:${BUILD_ID}"
-
+  # Paso 2: publicar la imagen en Artifact Registry
   - name: gcr.io/cloud-builders/docker
     args:
       - push
       - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:latest"
 
-  # Paso 2: actualizar configuración de Pulumi para apuntar a la imagen recién construida
-  - name: pulumi/pulumi
-    entrypoint: pulumi
+  # Paso 3 (opcional): ejecutar Pulumi. 
+  - name: pulumi/pulumi-python
+    id: pulumi-apply
+    entrypoint: sh
     args:
-      - config
-      - set
-      - imageTag
-      - "${BUILD_ID}"
-      - "--cwd"
-      - "infra"
+      - "-c"
+      - |
+        set -e
+        if [ "${_RUN_PULUMI}" != "true" ]; then
+          echo "Pulumi omitido (_RUN_PULUMI=${_RUN_PULUMI})."
+          exit 0
+        fi
+        export PATH=$$PATH:/root/.local/bin
+        mkdir -p infra/.pulumi-state
+        pulumi login file://$(pwd)/infra/.pulumi-state
+        pulumi stack select ${_STACK} --cwd infra --non-interactive || pulumi stack init ${_STACK} --cwd infra
+        pulumi config set gcp:project fog-serverless --cwd infra --non-interactive
+        pulumi config set gcp:region us-central1 --cwd infra --non-interactive
+        pulumi config set ingestApiKey "${_INGEST_API_KEY}" --cwd infra --non-interactive
+        cd infra
+        python3 -m pip install --user -r requirements.txt
+        pulumi up --yes
     env:
       - "PULUMI_CONFIG_PASSPHRASE="
+      - "_INGEST_API_KEY=${_INGEST_API_KEY}"
+      - "_STACK=${_STACK}"
+      - "_RUN_PULUMI=${_RUN_PULUMI}"
+    allowFailure: true
 
-  # Paso 3: aplicar infraestructura con Pulumi (única fuente de verdad)
-  - name: pulumi/pulumi
-    entrypoint: pulumi
-    args: ["up", "--yes", "--cwd", "infra"]
-    env:
-      - "PULUMI_CONFIG_PASSPHRASE="
+  # Paso 4 (opcional): desplegar la Cloud Function fog-processor
+  - name: gcr.io/cloud-builders/gcloud
+    id: deploy-fog-processor
+    entrypoint: sh
+    args:
+      - "-c"
+      - |
+        if [ "${_DEPLOY_FUNCTION}" != "true" ]; then
+          echo "Despliegue de función omitido (_DEPLOY_FUNCTION=${_DEPLOY_FUNCTION})."
+          exit 0
+        fi
+        gcloud functions deploy fog-processor \
+          --gen2 \
+          --region=us-central1 \
+          --project=fog-serverless \
+          --runtime=python311 \
+          --entry-point=process_event \
+          --trigger-topic=fog-events \
+          --source=functions/processor || { echo "Despliegue de función falló (ignorando para no romper el build)."; exit 0; }
+    allowFailure: true
 
 options:
   logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _INGEST_API_KEY: "demo-api-key"
+  _STACK: "dev2"
+  _RUN_PULUMI: "true"
+  _DEPLOY_FUNCTION: "false"

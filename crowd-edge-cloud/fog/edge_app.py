@@ -1,123 +1,154 @@
+import json
 import logging
+import os
+import random
 import time
-import cv2
-from ultralytics import YOLO
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
+
 import requests
 import yaml
-from datetime import datetime
 
-# Importamos las clases de tu compañera (Buffer y Eventos)
 from buffer import DiskBuffer
 from events import build_event
 
-# Configuración de logs
+# Configuración de logs para el nodo fog
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger("fog-node-ipcam")
+logger = logging.getLogger("fog-node")
+
 
 def load_config() -> Dict:
-    """Carga configuración desde config.yaml."""
+    """Carga configuraciones desde YAML."""
     with open(Path(__file__).parent / "config.yaml", "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
-def send_event(endpoint: str, event: Dict) -> bool:
-    """Envía el evento a Cloud Run."""
+
+def pick_event_type(people_count: int, thresholds: Dict[str, int]) -> str:
+    """Selecciona tipo de evento según umbrales."""
+    if people_count >= thresholds.get("people_high", 50):
+        return "CROWD_GATHERING_DETECTED"
+    if people_count >= thresholds.get("rapid_accumulation", 20):
+        return "RAPID_ACCUMULATION"
+    return "PEOPLE_COUNT_UPDATE"
+
+
+def send_event(endpoint: str, event: Dict, api_key: str) -> bool:
+    """Envía evento al endpoint protegido con API Key."""
+    headers = {"X-API-KEY": api_key} if api_key else {}
     try:
-        response = requests.post(endpoint, json=event, timeout=12)
-        if response.status_code == 200:
-            logger.info("✅ Evento enviado a Cloud Run: %s", event["event_type"])
+        resp = requests.post(endpoint, json=event, headers=headers, timeout=8)
+        if resp.status_code == 200:
+            logger.info("Evento enviado: %s", event["event_id"])
             return True
-        else:
-            logger.warning("⚠️ Servidor rechazó (%s): %s", response.status_code, response.text)
-            return False
+        logger.warning("HTTP %s al enviar evento %s: %s", resp.status_code, event["event_id"], resp.text)
+        return False
     except requests.RequestException as err:
-        logger.error("❌ Error de Red (Guardando en Buffer): %s", err)
+        logger.error("Falla de red al enviar evento %s: %s", event["event_id"], err)
         return False
 
-def run_ip_camera_fog():
-    # 1. Cargar Configuración
-    config = load_config()
+
+def flush_buffer(buffer: DiskBuffer, endpoint: str, api_key: str) -> None:
+    """Reintenta eventos pendientes del buffer."""
+    resent = buffer.flush(lambda ev: send_event(endpoint, ev, api_key))
+    if resent:
+        logger.info("Reenviados %s eventos pendientes", resent)
+
+
+def simulate_once(endpoint: str, cameras: List[str], thresholds: Dict[str, int], buffer: DiskBuffer, api_key: str) -> None:
+    """Genera eventos simulados por cámara."""
+    flush_buffer(buffer, endpoint, api_key)
+    for camera_id in cameras:
+        people_count = random.randint(5, 80)
+        event_type = pick_event_type(people_count, thresholds)
+        event = build_event(event_type, camera_id, people_count).to_dict()
+        if not send_event(endpoint, event, api_key):
+            buffer.save_event(event)
+            logger.info("Evento guardado para reintento: %s", event["event_id"])
+
+
+def simulate_forever(config: Dict, buffer: DiskBuffer, api_key: str) -> None:
+    """Bucle de simulación pura (sin cámara)."""
     endpoint = config["endpoint"]
-    camera_id = config.get("camera_ids", ["CAM-IP-GENERICA"])[0]
-    threshold = config.get("thresholds", {}).get("rapid_accumulation", 3)
-    
-    # 2. Obtener la fuente de video del YAML
-    # Si es '0' (número), OpenCV usará la webcam. Si es 'http...', usará el IP.
-    source_config = config.get("camera_source", 0)
-    logger.info(f"📡 Conectando a cámara: {source_config}")
+    send_interval = int(config.get("send_interval_seconds", 5))
+    retry_interval = int(config.get("retry_interval_seconds", send_interval))
+    camera_ids = config.get("camera_ids", ["cam-1"])
+    thresholds = config.get("thresholds", {})
+    logger.info("Modo simulado activo hacia %s", endpoint)
+    while True:
+        simulate_once(endpoint, camera_ids, thresholds, buffer, api_key)
+        time.sleep(send_interval)
+        flush_buffer(buffer, endpoint, api_key)
+        time.sleep(max(retry_interval - send_interval, 0))
 
-    # 3. Inicializar Buffer y Modelo IA
-    buffer_path = config.get("buffer_file", "./fog_buffer/events_pending.jsonl")
-    buffer = DiskBuffer(buffer_path)
-    
-    logger.info("🧠 Cargando modelo YOLOv8...")
-    model = YOLO('yolov8n.pt')
 
-    # 4. Abrir la cámara IP
-    cap = cv2.VideoCapture(source_config)
-    
-    # Verificación de conexión
-    if not cap.isOpened():
-        logger.error("❌ ERROR CRÍTICO: No se puede conectar a la cámara IP.")
-        logger.error("   -> Verifica que el celular y la laptop estén en el MISMO WiFi.")
-        logger.error(f"   -> Verifica la URL: {source_config}")
+def camera_loop(config: Dict, buffer: DiskBuffer, api_key: str) -> None:
+    """Modo cámara real con YOLO si está disponible; si falta, se degrada a simulado."""
+    try:
+        import cv2  # type: ignore
+        from ultralytics import YOLO  # type: ignore
+    except Exception as err:  # noqa: BLE001
+        logger.error("Dependencias de cámara/YOLO no disponibles: %s. Usando modo simulado.", err)
+        simulate_forever(config, buffer, api_key)
         return
 
-    logger.info("👀 Vigilancia iniciada. Presiona 'q' en la ventana de video para salir.")
-    
-    last_sent_time = 0
-    min_interval = 5.0 # Segundos mínimos entre alertas para no hacer spam
+    endpoint = config["endpoint"]
+    source = config.get("camera_source", 0)
+    camera_id = config.get("camera_id", "cam-webcam-1")
+    thresholds = config.get("thresholds", {})
+    min_interval = int(config.get("min_interval_seconds", 5))
 
+    logger.info("Modo cámara activo. Fuente: %s", source)
+    model = YOLO("yolov8n.pt")
+    cap = cv2.VideoCapture(source)
+    if not cap.isOpened():
+        logger.error("No se pudo abrir la cámara/stream. Usando modo simulado.")
+        simulate_forever(config, buffer, api_key)
+        return
+
+    last_sent = 0.0
     while True:
-        # A. Reintentar envíos fallidos (Buffer Flush)
-        resent = buffer.flush(lambda ev: send_event(endpoint, ev))
-        if resent:
-            logger.info(f"🔄 Buffer recuperado: {resent} eventos enviados.")
-
-        # B. Leer Frame
         ret, frame = cap.read()
         if not ret:
-            logger.error("❌ Error leyendo frame de la IP Cam (¿Se desconectó?)")
-            # Intentamos reconectar o esperar
+            logger.warning("Frame no disponible, reintento en 2s")
             time.sleep(2)
-            cap = cv2.VideoCapture(source_config) # Reintento simple
             continue
 
-        # C. Procesamiento IA (YOLO)
-        # Reducimos tamaño para agilizar transmisión por WiFi
-        frame_small = cv2.resize(frame, (640, 480))
-        results = model(frame_small, classes=0, verbose=False) # Solo personas
+        results = model(frame, classes=0, verbose=False)  # Solo personas
         people_count = len(results[0].boxes)
+        event_type = pick_event_type(people_count, thresholds)
+        now = time.time()
 
-        # D. Visualización
-        annotated_frame = results[0].plot()
-        cv2.imshow(f"Fog Node: {camera_id}", annotated_frame)
-
-        # E. Lógica de Negocio
-        current_time = time.time()
-        
-        # Disparar evento si supera umbral Y pasó el tiempo de espera
-        if people_count >= threshold and (current_time - last_sent_time) > min_interval:
-            
-            logger.info(f"🚨 AGLOMERACIÓN DETECTADA: {people_count} personas.")
-            
-            # Construir evento estándar
-            event_obj = build_event("CROWD_GATHERING_DETECTED", camera_id, people_count)
-            event_dict = event_obj.to_dict()
-            
-            # Enviar (o guardar en buffer si falla)
-            if send_event(endpoint, event_dict):
-                last_sent_time = current_time
+        if now - last_sent >= min_interval:
+            event = build_event(event_type, camera_id, people_count).to_dict()
+            if send_event(endpoint, event, api_key):
+                last_sent = now
             else:
-                buffer.save_event(event_dict)
+                buffer.save_event(event)
 
-        # Salir con 'q'
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        flush_buffer(buffer, endpoint, api_key)
 
-    cap.release()
-    cv2.destroyAllWindows()
+
+def main() -> None:
+    """Selecciona modo: camera (YOLO) o simulated."""
+    config = load_config()
+    endpoint = os.getenv("FOG_ENDPOINT", config.get("endpoint", ""))
+    api_key = os.getenv("FOG_API_KEY", config.get("api_key", ""))
+    if not api_key:
+        logger.warning("API Key no definida; el servicio de ingesta rechazará las peticiones.")
+    if not endpoint:
+        logger.error("Endpoint no definido; establece FOG_ENDPOINT o config.yaml.")
+        return
+
+    buffer_path = config.get("buffer_file", "./fog_buffer/events_pending.jsonl")
+    Path(buffer_path).parent.mkdir(parents=True, exist_ok=True)
+    buffer = DiskBuffer(buffer_path)
+
+    mode = config.get("mode", "simulated").lower()
+    if mode == "camera":
+        camera_loop(config, buffer, api_key)
+    else:
+        simulate_forever({**config, "endpoint": endpoint}, buffer, api_key)
+
 
 if __name__ == "__main__":
-    run_ip_camera_fog()
+    main()
