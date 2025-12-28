@@ -17,37 +17,14 @@ topic = gcp.pubsub.Topic(
     project=project,
 )
 
-# Cuenta de servicio dedicada para Cloud Run (ingesta)
-service_account = gcp.serviceaccount.Account(
-    "fog-ingestion-sa",
-    account_id="fog-ingestion-sa",
-    display_name="Fog ingestion runner",
-    project=project,
-)
-
-# Permisos mínimos para que la cuenta de servicio publique en Pub/Sub y use Firestore
-pubsub_publisher = gcp.projects.IAMMember(
-    "fog-ingestion-pubsub-publisher",
-    project=project,
-    role="roles/pubsub.publisher",
-    member=service_account.email.apply(lambda email: f"serviceAccount:{email}"),
-)
-
-datastore_user = gcp.projects.IAMMember(
-    "fog-ingestion-datastore-user",
-    project=project,
-    role="roles/datastore.user",
-    member=service_account.email.apply(lambda email: f"serviceAccount:{email}"),
-)
-
 # Servicio Cloud Run (v1) que recibe eventos HTTP simulados y los publica en Pub/Sub
+# Se usa la identidad gestionada por defecto de Cloud Run para evitar modificaciones IAM a nivel proyecto.
 cloud_run_service = gcp.cloudrun.Service(
     "fog-ingestion",
     location=region,
     project=project,
     template=gcp.cloudrun.ServiceTemplateArgs(
         spec=gcp.cloudrun.ServiceTemplateSpecArgs(
-            service_account_name=service_account.email,
             containers=[
                 gcp.cloudrun.ServiceTemplateSpecContainerArgs(
                     image=container_image,
