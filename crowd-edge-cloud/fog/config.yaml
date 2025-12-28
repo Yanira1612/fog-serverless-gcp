@@ -5,10 +5,10 @@ api_key: "fog-secret-123"
 # Modo de operación:
 # - simulated: genera eventos aleatorios (rápido para demo)
 # - camera: usa cámara/stream + YOLO si está instalado (cv2, ultralytics)
-mode: "simulated"
+mode: "camera"
 
 # Solo para modo camera
-camera_source: 0           # 0 para webcam local, o URL rtsp/http
+camera_source: "http://192.168.18.46:8080/video"            # 0 para webcam local, o URL rtsp/http
 camera_id: "cam-webcam-1"
 min_interval_seconds: 5    # anti-spam entre alertas
 
