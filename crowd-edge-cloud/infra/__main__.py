@@ -148,6 +148,7 @@ subscription = gcp.pubsub.Subscription(
 pulumi.export("ingest_url", ingest_service.statuses.apply(lambda s: s[0]["url"]))
 pulumi.export("processor_url", processor_service.statuses.apply(lambda s: s[0]["url"]))
 pulumi.export("topic_name", topic.name)
+pulumi.export("database_name", firestore_db.name)
 # Exportes principales para uso en otros componentes o documentación
 #pulumi.export("cloudRunUrl", cloud_run_service.statuses.apply(lambda s: s[0]["url"]))
 #pulumi.export("topicName", topic.name)

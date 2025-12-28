@@ -52,7 +52,7 @@ def run_ip_camera_fog():
     buffer = DiskBuffer(buffer_path)
     
     logger.info("🧠 Cargando modelo YOLOv8...")
-    model = YOLO('yolov8n.pt')
+    model = YOLO('yolov8n.pt') #modelo 8m 
 
     # 4. Abrir la cámara IP
     cap = cv2.VideoCapture(source_config)
@@ -87,7 +87,7 @@ def run_ip_camera_fog():
         # C. Procesamiento IA (YOLO)
         # Reducimos tamaño para agilizar transmisión por WiFi
         frame_small = cv2.resize(frame, (640, 480))
-        results = model(frame_small, classes=0, verbose=False) # Solo personas
+        results = model(frame_small, classes=0, conf=0.5, verbose=False) # Solo personas
         people_count = len(results[0].boxes)
 
         # D. Visualización
