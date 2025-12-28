@@ -32,7 +32,6 @@ cloud_run_service = gcp.cloudrun.Service(
     project=project,
     template=gcp.cloudrun.ServiceTemplateArgs(
         spec=gcp.cloudrun.ServiceTemplateSpecArgs(
-            service_account_name=service_account.email,
             containers=[
                 gcp.cloudrun.ServiceTemplateSpecContainerArgs(
                     image=container_image,
@@ -57,13 +56,8 @@ public_invoker = gcp.cloudrun.IamMember(
     project=project,
 )
 
-# Rol para que la cuenta de servicio pueda usar Firestore
-datastore_binding = gcp.projects.IAMMember(
-    "fog-ingestion-firestore-access",
-    project=project,
-    role="roles/datastore.user",
-    member=service_account.email.apply(lambda email: f"serviceAccount:{email}"),
-)
+# Nota: no se asignan roles IAM a nivel proyecto para evitar errores y mantener
+# el principio de mínimo privilegio. Se usa la service account por defecto de Cloud Run.
 
 # Base de datos Firestore en modo nativo
 firestore_db = gcp.firestore.Database(

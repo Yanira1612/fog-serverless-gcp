@@ -1,1 +1,5 @@
 encryptionsalt: v1:USl45Vkepn4=:v1:wXTzm1bwLuzBXdb4:4RMHMBOYgrZDtYfOzsLO75URr9dQYg==
+config:
+  crowd-edge-cloud:imageTag: latest
+  gcp:project: fog-serverless
+  gcp:region: us-central1
