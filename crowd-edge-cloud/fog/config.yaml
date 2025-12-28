@@ -1,5 +1,5 @@
 # Configuración para la simulación de eventos en el borde
-endpoint: "https://fog-ingestion-d71a657-5v357siqga-uc.a.run.app/events"  # URL de Cloud Run
+endpoint: "https://fog-ingestion-6c41198-5v357siqga-uc.a.run.app/events"  # URL de Cloud Run
 
 # 2. LA IP DE TU CELULAR (IP Webcam)
 # Si quisieras usar la webcam de la laptop, pondrías: camera_source: 0

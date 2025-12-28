@@ -24,7 +24,7 @@ def load_config() -> Dict:
 def send_event(endpoint: str, event: Dict) -> bool:
     """Envía el evento a Cloud Run."""
     try:
-        response = requests.post(endpoint, json=event, timeout=5)
+        response = requests.post(endpoint, json=event, timeout=12)
         if response.status_code == 200:
             logger.info("✅ Evento enviado a Cloud Run: %s", event["event_type"])
             return True

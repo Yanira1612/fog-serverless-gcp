@@ -1,22 +1,15 @@
-# Imagen base liviana para ejecutar FastAPI en Cloud Run
 FROM python:3.11-slim
 
-# Instalar dependencias del sistema mínimas
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential && \
-    rm -rf /var/lib/apt/lists/*
-
+ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
-# Instalar dependencias de Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar el código de la aplicación
-COPY main.py .
+COPY . .
 
-# Exponer el puerto esperado por Cloud Run
-ENV PORT=8080
-EXPOSE 8080
+# AGREGA ESTA LÍNEA PARA FORZAR RECONSTRUCCIÓN:
+ENV FORCE_REBUILD=1
 
-# Comando de arranque con uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Comando vital para que Cloud Run no falle:
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 main:app

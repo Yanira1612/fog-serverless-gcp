@@ -1,75 +1,70 @@
-import json
 import logging
 import os
-from typing import Any, Dict
-
-from fastapi import FastAPI, HTTPException
-from google.api_core import exceptions as gcp_exceptions
+import json
+from flask import Flask, request, jsonify
 from google.cloud import pubsub_v1
-from pydantic import BaseModel, Field
 
-# Configuración básica de logging estructurado en JSON
+# 1. Configuración de Logs
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("fog-ingest")
 
-# Configuración de Pub/Sub y proyecto
+app = Flask(__name__)
+
+# 2. Configuración de Pub/Sub y Proyecto
+# Usamos las variables que definiste en Pulumi
 PROJECT_ID = os.getenv("PROJECT_ID", "fog-serverless")
-TOPIC_NAME = os.getenv("TOPIC_NAME", "fog-events")
+TOPIC_ID = os.getenv("TOPIC_ID", "fog-events")
 
-publisher = pubsub_v1.PublisherClient()
-topic_path = publisher.topic_path(PROJECT_ID, TOPIC_NAME)
+# Inicializar cliente Pub/Sub
+publisher = None
+topic_path = None
 
+try:
+    publisher = pubsub_v1.PublisherClient()
+    topic_path = publisher.topic_path(PROJECT_ID, TOPIC_ID)
+except Exception as e:
+    logger.error(f"Error inicializando Pub/Sub: {e}")
 
-class EventPayload(BaseModel):
-    """Estructura mínima esperada para eventos simulados desde el fog."""
-
-    event_id: str = Field(..., description="Identificador único del evento")
-    event_type: str = Field(..., description="Tipo de evento desde el fog")
-    camera_id: str = Field(..., description="Identificador de la cámara de borde")
-    timestamp: str = Field(..., description="Marca de tiempo ISO8601 del evento")
-    people_count: int | None = Field(
-        None, description="Cantidad de personas detectadas cuando aplique"
-    )
-
-
-app = FastAPI(title="Fog Ingestion Service", version="1.0.0")
-
-
-def log_structured(message: str, payload: Dict[str, Any], severity: str = "INFO") -> None:
-    """Emite logs en formato JSON para facilitar análisis en Cloud Logging."""
+def log_structured(message: str, payload: dict, severity: str = "INFO"):
+    """Emite logs en formato JSON para Cloud Logging."""
     log_entry = {"severity": severity, "message": message, "payload": payload}
-    logger.info(json.dumps(log_entry))
+    print(json.dumps(log_entry))
 
+@app.route("/events", methods=["POST"])
+def receive_event():
+    """Recibe eventos, valida campos básicos y publica en Pub/Sub."""
+    if not publisher:
+         return jsonify({"error": "Pub/Sub no inicializado"}), 500
 
-@app.post("/events")
-async def receive_event(event: EventPayload):
-    """Recibe eventos simulados, valida campos y publica en Pub/Sub."""
-    event_dict = event.dict()
     try:
-        future = publisher.publish(topic_path, json.dumps(event_dict).encode("utf-8"))
-        message_id = future.result()
-        log_structured(
-            "Evento aceptado y publicado en Pub/Sub",
-            {"event_id": event.event_id, "message_id": message_id},
-        )
-        return {"status": "accepted", "message_id": message_id}
-    except (gcp_exceptions.GoogleAPICallError, gcp_exceptions.RetryError) as err:
-        log_structured(
-            "Falla al publicar en Pub/Sub",
-            {"event_id": event.event_id, "error": str(err)},
-            severity="ERROR",
-        )
-        raise HTTPException(status_code=500, detail="Error al publicar evento") from err
-    except Exception as err:  # noqa: BLE001
-        log_structured(
-            "Error inesperado en ingesta",
-            {"event_id": event.event_id, "error": str(err)},
-            severity="ERROR",
-        )
-        raise HTTPException(status_code=500, detail="Error inesperado") from err
+        # Flask a veces necesita force=True si el header no es application/json exacto
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"error": "Payload vacío"}), 400
 
+        # Publicar a Pub/Sub
+        data_str = json.dumps(data)
+        future = publisher.publish(topic_path, data_str.encode("utf-8"))
+        
+        # Esperamos confirmación (timeout corto)
+        message_id = future.result(timeout=5)
 
-@app.get("/health")
-async def health():
-    """Endpoint simple para verificar salud del servicio en Cloud Run."""
-    return {"status": "ok"}
+        log_structured(
+            "Evento aceptado y publicado",
+            {"event_id": data.get("event_id"), "message_id": message_id}
+        )
+        
+        return jsonify({"status": "accepted", "message_id": message_id}), 200
+
+    except Exception as e:
+        log_structured("Error procesando evento", {"error": str(e)}, severity="ERROR")
+        return jsonify({"detail": str(e)}), 500
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok", "service": "fog-ingestion-flask"}), 200
+
+if __name__ == "__main__":
+    # Esto ayuda a probar localmente si es necesario
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
