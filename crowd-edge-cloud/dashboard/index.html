@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Fog Computing Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1a1a2e; color: white; margin: 20px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 20px; }
+        .card { background: #16213e; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); text-align: center; }
+        .kpi { font-size: 2.5em; font-weight: bold; color: #4ecca3; }
+        h1 { text-align: center; color: #4ecca3; }
+        canvas { max-width: 100%; height: auto !important; }
+    </style>
+</head>
+<body>
+
+    <h1>Panel de Control - Nodo Fog</h1>
+
+    <div class="grid">
+        <div class="card">
+            <h3>Total de Eventos</h3>
+            <div id="total-events" class="kpi">...</div>
+        </div>
+        <div class="card">
+            <h3>Cámaras Activas</h3>
+            <div id="active-cameras" class="kpi">...</div>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <h3>Distribución de Eventos</h3>
+            <canvas id="chartTypes"></canvas>
+        </div>
+        <div class="card">
+            <h3>Eventos por Cámara</h3>
+            <canvas id="chartCameras"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'https://fog-analyst-654276264702.us-central1.run.app/metrics';
+
+        fetch(API_URL)
+            .then(res => res.json())
+            .then(data => {
+                // Actualizar KPIs
+                document.getElementById('total-events').innerText = data.total_events;
+                document.getElementById('active-cameras').innerText = Object.keys(data.cameras).length;
+
+                // Gráfico de Tarta (Tipos de Evento)
+                new Chart(document.getElementById('chartTypes'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: Object.keys(data.distribution),
+                        datasets: [{
+                            data: Object.values(data.distribution),
+                            backgroundColor: ['#e94560', '#0f3460', '#4ecca3', '#fca311']
+                        }]
+                    },
+                    options: { plugins: { legend: { labels: { color: 'white' } } } }
+                });
+
+                // Gráfico de Barras (Cámaras)
+                new Chart(document.getElementById('chartCameras'), {
+                    type: 'bar',
+                    data: {
+                        labels: Object.keys(data.cameras),
+                        datasets: [{
+                            label: 'Eventos',
+                            data: Object.values(data.cameras),
+                            backgroundColor: '#4ecca3'
+                        }]
+                    },
+                    options: { 
+                        scales: { 
+                            y: { ticks: { color: 'white' } },
+                            x: { ticks: { color: 'white' } }
+                        },
+                        plugins: { legend: { display: false } }
+                    }
+                });
+            })
+            .catch(err => console.error('Error:', err));
+    </script>
+</body>
+</html>
