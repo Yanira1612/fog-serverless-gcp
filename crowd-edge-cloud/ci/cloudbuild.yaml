@@ -53,4 +53,4 @@ substitutions:
   _PROJECT: fog-serverless
   _REGION: us-central1
   _TAG: latest
-  _INGEST_API_KEY: "set-in-trigger"
+  _INGEST_API_KEY: "fog-secret-123"
