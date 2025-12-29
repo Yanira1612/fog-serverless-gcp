@@ -140,13 +140,20 @@ def get_metrics():
         # Log para que lo veas en la consola de Google
         logger.info(f"DEBUG: Peak Hour {peak_hour} had {total_people_peak} people in {total_events_peak} events.")
 
+        # Obtener el último evento para la predicción del Dashboard
+        latest_event = "UNKNOWN"
+        last_doc = db.collection("events").order_by("received_at", direction=firestore.Query.DESCENDING).limit(1).get()
+        if last_doc:
+            latest_event = last_doc[0].to_dict().get("event_type", "UNKNOWN")
+
         return jsonify({
             "total_events": total,
             "distribution": type_counts,
             "cameras": cam_counts,
             "peak_hour": peak_hour,
             "peak_avg_people": peak_avg,
-            "hourly_counts": {h: v["events"] for h, v in sorted(hourly_data.items())}
+            "hourly_counts": {h: v["events"] for h, v in sorted(hourly_data.items())},
+            "latest_event": latest_event
         }), 200
     except Exception as e:
         logger.error(f"❌ Error: {e}")

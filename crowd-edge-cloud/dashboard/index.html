@@ -12,6 +12,10 @@
         h1 { text-align: center; color: #4ecca3; }
         canvas { max-width: 100%; height: auto !important; }
         .peak-label { color: #e94560; }
+        .ai-card { background: linear-gradient(135deg, #16213e 0%, #0f3460 100%); border: 2px solid #4ecca3; }
+        .prediction-text { font-size: 1.5em; color: #4ecca3; margin: 10px 0; }
+        .probability-bar { background: #1a1a2e; border-radius: 10px; height: 10px; width: 100%; margin-top: 5px; }
+        .probability-fill { background: #4ecca3; height: 100%; border-radius: 10px; width: 0%; transition: width 1s; }
     </style>
 </head>
 <body>
@@ -35,6 +39,17 @@
             </p>
         </div>
     </div>
+
+    <div class="grid">
+        <div class="card ai-card" id="ai-section" style="grid-column: 1 / -1;">
+            <h3>🤖 Predicción del Sistema (IA)</h3>
+            <p>Estado actual: <span id="current-state" style="font-weight: bold;">Cargando...</span></p>
+                <div class="prediction-text">Próximo evento probable: <span id="predicted-event">...</span></div>
+            <p>Probabilidad: <span id="probability-value">0</span>%</p>
+            <div class="probability-bar"><div id="probability-fill" class="probability-fill"></div></div>
+        </div>
+    </div>
+
 
     <div class="grid">
         <div class="card">
@@ -125,6 +140,23 @@
                         plugins: { legend: { labels: { color: 'white' } } }
                     }
                 });
+
+                // 5. Sección IA
+                // Lógica de Predicción IA
+                const latest = data.latest_event;
+                document.getElementById('current-state').innerText = latest;
+
+                if (latest !== "UNKNOWN") {
+                    fetch(`https://fog-analyst-654276264702.us-central1.run.app/predict_next?current_event=${latest}`)
+                        .then(res => res.json())
+                        .then(pred => {
+                            document.getElementById('predicted-event').innerText = pred.prediction;
+                            document.getElementById('probability-value').innerText = pred.probability;
+                            document.getElementById('probability-fill').style.width = pred.probability + "%";
+                        });
+                }
+
+
             })
             .catch(err => console.error('Error:', err));
     </script>
