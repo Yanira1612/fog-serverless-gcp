@@ -6,16 +6,17 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1a1a2e; color: white; margin: 20px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 20px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 20px; }
         .card { background: #16213e; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); text-align: center; }
-        .kpi { font-size: 2.5em; font-weight: bold; color: #4ecca3; }
+        .kpi { font-size: 2.2em; font-weight: bold; color: #4ecca3; }
         h1 { text-align: center; color: #4ecca3; }
         canvas { max-width: 100%; height: auto !important; }
+        .peak-label { color: #e94560; }
     </style>
 </head>
 <body>
 
-    <h1>Panel de Control - Nodo Fog</h1>
+    <h1>🚀 Panel de Control - Nodo Fog</h1>
 
     <div class="grid">
         <div class="card">
@@ -25,6 +26,13 @@
         <div class="card">
             <h3>Cámaras Activas</h3>
             <div id="active-cameras" class="kpi">...</div>
+        </div>
+        <div class="card">
+            <h3>Hora de Mayor Tráfico</h3>
+            <div id="peak-hour" class="kpi peak-label">...</div>
+            <p style="margin-top: 10px; color: #888;">
+                Promedio en esta hora: <span id="peak-avg" style="color: white; font-weight: bold;">0</span> personas
+            </p>
         </div>
     </div>
 
@@ -39,17 +47,26 @@
         </div>
     </div>
 
+    <div class="grid">
+        <div class="card" style="grid-column: 1 / -1;">
+            <h3>Tendencia de Tráfico (Hourly)</h3>
+            <canvas id="chartTrend" style="max-height: 300px;"></canvas>
+        </div>
+    </div>
+
     <script>
         const API_URL = 'https://fog-analyst-654276264702.us-central1.run.app/metrics';
 
         fetch(API_URL)
             .then(res => res.json())
             .then(data => {
-                // Actualizar KPIs
+                // 1. KPIs
                 document.getElementById('total-events').innerText = data.total_events;
                 document.getElementById('active-cameras').innerText = Object.keys(data.cameras).length;
+                document.getElementById('peak-hour').innerText = data.peak_hour;
+                document.getElementById('peak-avg').innerText = data.peak_avg_people;
 
-                // Gráfico de Tarta (Tipos de Evento)
+                // 2. Gráfico Distribución
                 new Chart(document.getElementById('chartTypes'), {
                     type: 'doughnut',
                     data: {
@@ -62,7 +79,7 @@
                     options: { plugins: { legend: { labels: { color: 'white' } } } }
                 });
 
-                // Gráfico de Barras (Cámaras)
+                // 3. Gráfico Cámaras
                 new Chart(document.getElementById('chartCameras'), {
                     type: 'bar',
                     data: {
@@ -79,6 +96,33 @@
                             x: { ticks: { color: 'white' } }
                         },
                         plugins: { legend: { display: false } }
+                    }
+                });
+
+                // 4. Gráfico Tendencia (Corregido para usar hourly_counts)
+                const trendData = data.hourly_counts || {};
+                const sortedHours = Object.keys(trendData).sort();
+                const trendValues = sortedHours.map(h => trendData[h]);
+
+                new Chart(document.getElementById('chartTrend'), {
+                    type: 'line',
+                    data: {
+                        labels: sortedHours,
+                        datasets: [{
+                            label: 'Volumen de Eventos',
+                            data: trendValues,
+                            borderColor: '#4ecca3',
+                            backgroundColor: 'rgba(78, 204, 163, 0.2)',
+                            fill: true,
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            y: { ticks: { color: 'white' }, grid: { color: 'rgba(255,255,255,0.1)' } },
+                            x: { ticks: { color: 'white' }, grid: { color: 'rgba(255,255,255,0.1)' } }
+                        },
+                        plugins: { legend: { labels: { color: 'white' } } }
                     }
                 });
             })
