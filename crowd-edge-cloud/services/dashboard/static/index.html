@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Fog Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .card { border: 1px solid #ccc; padding: 16px; margin-bottom: 16px; border-radius: 8px; }
+    pre { background: #f4f4f4; padding: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Fog Dashboard</h1>
+  <div class="card">
+    <h3>Métricas (eventos por cámara - 24h)</h3>
+    <pre id="metrics"></pre>
+  </div>
+  <div class="card">
+    <h3>Alertas recientes</h3>
+    <pre id="alerts"></pre>
+  </div>
+  <div class="card">
+    <h3>Predicciones</h3>
+    <pre id="pred"></pre>
+  </div>
+  <script>
+    const token = prompt("Token de acceso (Bearer):", "");
+    const headers = token ? { "Authorization": "Bearer " + token } : {};
+    function load(endpoint, target) {
+      fetch(endpoint, { headers })
+        .then(r => r.json())
+        .then(d => document.getElementById(target).textContent = JSON.stringify(d, null, 2))
+        .catch(e => document.getElementById(target).textContent = "Error: " + e);
+    }
+    load("/metrics", "metrics");
+    load("/alerts", "alerts");
+    load("/predictions", "pred");
+  </script>
+</body>
+</html>

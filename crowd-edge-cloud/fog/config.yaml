@@ -1,14 +1,14 @@
 # Configuración para la simulación de eventos en el borde
-endpoint: "https://fog-ingestion-ceba1ca-5v357siqga-uc.a.run.app/events"  # Reemplazar con URL real de Cloud Run
-api_key: "fog-secret-123"
+endpoint: "https://fog-ingestion-<hash>.a.run.app/events"  # Reemplazar con URL real de Cloud Run
+api_key: "DEFINIR-API-KEY"
 
 # Modo de operación:
 # - simulated: genera eventos aleatorios (rápido para demo)
 # - camera: usa cámara/stream + YOLO si está instalado (cv2, ultralytics)
-mode: "camera"
+mode: "simulated"
 
 # Solo para modo camera
-camera_source: "http://192.168.18.46:8080/video"            # 0 para webcam local, o URL rtsp/http
+camera_source: 0            # 0 para webcam local, o URL rtsp/http
 camera_id: "cam-webcam-1"
 min_interval_seconds: 5    # anti-spam entre alertas
 
@@ -25,3 +25,4 @@ camera_ids:
 thresholds:
   people_high: 50
   rapid_accumulation: 20
+  prolonged_minutes: 2

@@ -1,17 +1,29 @@
 import base64
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict
 
 from google.cloud import firestore
+from google.cloud import pubsub_v1
 
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("fog-processor")
 
-# Cliente global de Firestore (usa credenciales de la función)
+# Cliente global de Firestore
 db = firestore.Client()
+
+# Pub/Sub publisher para enrutar a otros tópicos
+publisher = pubsub_v1.PublisherClient()
+
+# Variables de entorno para tópicos de salida
+TOPIC_ALERTS = os.getenv("TOPIC_ALERTS", "fog-events.alerts")
+TOPIC_OPS = os.getenv("TOPIC_OPS", "fog-events.ops")
+TOPIC_TICKETS = os.getenv("TOPIC_TICKETS", "fog-events.tickets")
+TOPIC_DLQ = os.getenv("TOPIC_DLQ", "fog-events.dlq")
+PROJECT_ID = os.getenv("PROJECT_ID", "fog-serverless")
 
 
 def _decode_event(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -22,8 +34,14 @@ def _decode_event(event: Dict[str, Any]) -> Dict[str, Any]:
     return json.loads(decoded_bytes.decode("utf-8"))
 
 
+def _publish(topic_name: str, payload: Dict[str, Any]) -> None:
+    """Publica un payload en el tópico indicado."""
+    topic_path = publisher.topic_path(PROJECT_ID, topic_name)
+    publisher.publish(topic_path, json.dumps(payload).encode("utf-8"))
+
+
 def _store_event(transaction: firestore.Transaction, payload: Dict[str, Any]) -> bool:
-    """Guarda evento e idempotencia; retorna True si se insertó, False si ya existía."""
+    """Guarda evento e idempotencia; True si se insertó, False si ya existía."""
     event_id = payload["event_id"]
     camera_id = payload.get("camera_id", "unknown")
 
@@ -50,8 +68,20 @@ def _store_event(transaction: firestore.Transaction, payload: Dict[str, Any]) ->
     return True
 
 
+def _route_event(payload: Dict[str, Any]) -> str:
+    """Determina el tópico destino según el tipo de evento."""
+    event_type = payload.get("event_type", "")
+    if event_type in {"CROWD_GATHERING", "PROLONGED_CROWD"}:
+        return TOPIC_ALERTS
+    if event_type == "SUDDEN_SPIKE":
+        return TOPIC_OPS
+    if event_type == "CAMERA_OFFLINE":
+        return TOPIC_TICKETS
+    return TOPIC_DLQ
+
+
 def process_event(event: Dict[str, Any], context: Any) -> None:
-    """Función Cloud Function (gen2) activada por Pub/Sub."""
+    """Función Cloud Function (gen2) activada por Pub/Sub raw."""
     try:
         payload = _decode_event(event)
     except Exception as err:  # noqa: BLE001
@@ -68,27 +98,33 @@ def process_event(event: Dict[str, Any], context: Any) -> None:
     try:
         inserted = transaction.call(_store_event, payload)
     except Exception as err:  # noqa: BLE001
-        logger.error(
-            "Error al persistir evento %s: %s",
-            payload.get("event_id"),
-            err,
-        )
+        logger.error("Error al persistir evento %s: %s", payload.get("event_id"), err)
+        _publish(TOPIC_DLQ, {"error": str(err), "payload": payload})
         return
 
     if not inserted:
         logger.info("Evento duplicado ignorado: %s", payload.get("event_id"))
-        return
+    else:
+        logger.info(
+            "Evento procesado y guardado en Firestore",
+            extra={
+                "event_id": payload.get("event_id"),
+                "event_type": payload.get("event_type"),
+                "camera_id": payload.get("camera_id"),
+            },
+        )
 
-    logger.info(
-        "Evento procesado y guardado en Firestore",
-        extra={
-            "event_id": payload.get("event_id"),
-            "event_type": payload.get("event_type"),
-            "camera_id": payload.get("camera_id"),
-        },
-    )
+    # Enrutamiento a tópico correspondiente
+    try:
+        target_topic = _route_event(payload)
+        _publish(target_topic, payload)
+        logger.info("Evento reenrutado a tópico %s", target_topic)
+    except Exception as err:  # noqa: BLE001
+        logger.error("Error al reenrutar evento %s: %s", payload.get("event_id"), err)
+        _publish(TOPIC_DLQ, {"error": str(err), "payload": payload})
 
-    if payload.get("event_type") == "CROWD_GATHERING_DETECTED":
+    # Alertar en logs si hay aglomeración
+    if payload.get("event_type") in {"CROWD_GATHERING", "PROLONGED_CROWD"}:
         logger.warning(
             "ALERTA de aglomeración detectada en cámara %s (evento %s)",
             payload.get("camera_id"),

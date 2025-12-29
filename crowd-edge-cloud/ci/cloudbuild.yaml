@@ -1,5 +1,5 @@
 steps:
-  # Paso 1: construir la imagen del servicio de ingesta
+  # Paso 1: construir imágenes (ingesta y dashboard)
   - name: gcr.io/cloud-builders/docker
     args:
       - build
@@ -7,13 +7,25 @@ steps:
       - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:latest"
       - "./services/ingest"
 
-  # Paso 2: publicar la imagen en Artifact Registry
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - "-t"
+      - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-dashboard:latest"
+      - "./services/dashboard"
+
+  # Paso 2: publicar imágenes
   - name: gcr.io/cloud-builders/docker
     args:
       - push
       - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:latest"
 
-  # Paso 3 (opcional): ejecutar Pulumi. 
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-dashboard:latest"
+
+  # Paso 3 (opcional): Pulumi (permitido fallar por políticas IAM)
   - name: pulumi/pulumi-python
     id: pulumi-apply
     entrypoint: sh
@@ -32,17 +44,19 @@ steps:
         pulumi config set gcp:project fog-serverless --cwd infra --non-interactive
         pulumi config set gcp:region us-central1 --cwd infra --non-interactive
         pulumi config set ingestApiKey "${_INGEST_API_KEY}" --cwd infra --non-interactive
+        pulumi config set dashboardApiToken "${_DASHBOARD_API_TOKEN}" --cwd infra --non-interactive
         cd infra
         python3 -m pip install --user -r requirements.txt
         pulumi up --yes
     env:
       - "PULUMI_CONFIG_PASSPHRASE="
       - "_INGEST_API_KEY=${_INGEST_API_KEY}"
+      - "_DASHBOARD_API_TOKEN=${_DASHBOARD_API_TOKEN}"
       - "_STACK=${_STACK}"
       - "_RUN_PULUMI=${_RUN_PULUMI}"
     allowFailure: true
 
-  # Paso 4 (opcional): desplegar la Cloud Function fog-processor
+  # Paso 4 (opcional): deploy función principal (procesador)
   - name: gcr.io/cloud-builders/gcloud
     id: deploy-fog-processor
     entrypoint: sh
@@ -50,7 +64,7 @@ steps:
       - "-c"
       - |
         if [ "${_DEPLOY_FUNCTION}" != "true" ]; then
-          echo "Despliegue de función omitido (_DEPLOY_FUNCTION=${_DEPLOY_FUNCTION})."
+          echo "Deploy fog-processor omitido (_DEPLOY_FUNCTION=${_DEPLOY_FUNCTION})."
           exit 0
         fi
         gcloud functions deploy fog-processor \
@@ -59,8 +73,88 @@ steps:
           --project=fog-serverless \
           --runtime=python311 \
           --entry-point=process_event \
-          --trigger-topic=fog-events \
-          --source=functions/processor || { echo "Despliegue de función falló (ignorando para no romper el build)."; exit 0; }
+          --trigger-topic=fog-events.raw \
+          --source=functions/processor || { echo "Deploy fog-processor falló (se ignora)."; exit 0; }
+    allowFailure: true
+
+  # Paso 5 (opcional): deploy funciones de enrutamiento
+  - name: gcr.io/cloud-builders/gcloud
+    id: deploy-fog-alerts
+    entrypoint: sh
+    args:
+      - "-c"
+      - |
+        if [ "${_DEPLOY_ALERTS}" != "true" ]; then
+          echo "Deploy alerts omitido (_DEPLOY_ALERTS=${_DEPLOY_ALERTS})."
+          exit 0
+        fi
+        gcloud functions deploy fog-alerts \
+          --gen2 \
+          --region=us-central1 \
+          --project=fog-serverless \
+          --runtime=python311 \
+          --entry-point=process_alert \
+          --trigger-topic=fog-events.alerts \
+          --source=functions/alerts || { echo "Deploy alerts falló (se ignora)."; exit 0; }
+    allowFailure: true
+
+  - name: gcr.io/cloud-builders/gcloud
+    id: deploy-fog-ops
+    entrypoint: sh
+    args:
+      - "-c"
+      - |
+        if [ "${_DEPLOY_OPS}" != "true" ]; then
+          echo "Deploy ops omitido (_DEPLOY_OPS=${_DEPLOY_OPS})."
+          exit 0
+        fi
+        gcloud functions deploy fog-ops \
+          --gen2 \
+          --region=us-central1 \
+          --project=fog-serverless \
+          --runtime=python311 \
+          --entry-point=process_ops \
+          --trigger-topic=fog-events.ops \
+          --source=functions/ops || { echo "Deploy ops falló (se ignora)."; exit 0; }
+    allowFailure: true
+
+  - name: gcr.io/cloud-builders/gcloud
+    id: deploy-fog-tickets
+    entrypoint: sh
+    args:
+      - "-c"
+      - |
+        if [ "${_DEPLOY_TICKETS}" != "true" ]; then
+          echo "Deploy tickets omitido (_DEPLOY_TICKETS=${_DEPLOY_TICKETS})."
+          exit 0
+        fi
+        gcloud functions deploy fog-tickets \
+          --gen2 \
+          --region=us-central1 \
+          --project=fog-serverless \
+          --runtime=python311 \
+          --entry-point=process_ticket \
+          --trigger-topic=fog-events.tickets \
+          --source=functions/tickets || { echo "Deploy tickets falló (se ignora)."; exit 0; }
+    allowFailure: true
+
+  # Paso 6 (opcional): deploy dashboard
+  - name: gcr.io/cloud-builders/gcloud
+    id: deploy-fog-dashboard
+    entrypoint: sh
+    args:
+      - "-c"
+      - |
+        if [ "${_DEPLOY_DASHBOARD}" != "true" ]; then
+          echo "Deploy dashboard omitido (_DEPLOY_DASHBOARD=${_DEPLOY_DASHBOARD})."
+          exit 0
+        fi
+        gcloud run deploy fog-dashboard \
+          --image=us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-dashboard:latest \
+          --region=us-central1 \
+          --project=fog-serverless \
+          --allow-unauthenticated \
+          --set-env-vars=DASHBOARD_API_TOKEN=${_DASHBOARD_API_TOKEN}
     allowFailure: true
 
 options:
@@ -68,6 +162,11 @@ options:
 
 substitutions:
   _INGEST_API_KEY: "demo-api-key"
+  _DASHBOARD_API_TOKEN: "demo-dashboard-token"
   _STACK: "dev2"
   _RUN_PULUMI: "true"
   _DEPLOY_FUNCTION: "false"
+  _DEPLOY_ALERTS: "false"
+  _DEPLOY_OPS: "false"
+  _DEPLOY_TICKETS: "false"
+  _DEPLOY_DASHBOARD: "false"
