@@ -6,8 +6,6 @@ from typing import Dict
 
 @dataclass
 class FogEvent:
-    """Modelo simple para eventos simulados en el borde."""
-
     event_id: str
     event_type: str
     camera_id: str

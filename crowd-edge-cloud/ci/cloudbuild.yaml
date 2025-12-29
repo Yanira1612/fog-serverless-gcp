@@ -44,8 +44,8 @@ steps:
           --runtime=python311 \
           --entry-point=process_event \
           --trigger-topic=fog-events \
-          --source=functions/processor
-
+          --source=functions/processor \
+          --set-env-vars "DB_NAME=${_DB_NAME}"
 options:
   logging: CLOUD_LOGGING_ONLY
 
@@ -54,3 +54,4 @@ substitutions:
   _REGION: us-central1
   _TAG: latest
   _INGEST_API_KEY: "fog-secret-123"
+  _DB_NAME: "default-firestore-9c92172"

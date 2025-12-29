@@ -4,14 +4,17 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+from google.api_core.exceptions import AlreadyExists
 from google.cloud import firestore
+import os
 
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("fog-processor")
 
 # Cliente global de Firestore (usa credenciales de la función)
-db = firestore.Client()
+DB_NAME = os.getenv("DB_NAME")
+db = firestore.Client(database=DB_NAME) if DB_NAME else firestore.Client()
 
 
 def _decode_event(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -22,7 +25,7 @@ def _decode_event(event: Dict[str, Any]) -> Dict[str, Any]:
     return json.loads(decoded_bytes.decode("utf-8"))
 
 
-def _store_event(transaction: firestore.Transaction, payload: Dict[str, Any]) -> bool:
+def _store_event(payload: Dict[str, Any]) -> bool:
     """Guarda evento e idempotencia; retorna True si se insertó, False si ya existía."""
     event_id = payload["event_id"]
     camera_id = payload.get("camera_id", "unknown")
@@ -30,15 +33,15 @@ def _store_event(transaction: firestore.Transaction, payload: Dict[str, Any]) ->
     events_ref = db.collection("events").document(event_id)
     camera_state_ref = db.collection("camera_state").document(camera_id)
 
-    event_snapshot = events_ref.get(transaction=transaction)
-    if event_snapshot.exists:
-        return False
-
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    transaction.set(events_ref, {**payload, "received_at": now_iso})
-    transaction.set(
-        camera_state_ref,
+    try:
+        # create garantiza idempotencia: falla si ya existe
+        events_ref.create({**payload, "received_at": now_iso})
+    except AlreadyExists:
+        return False
+
+    camera_state_ref.set(
         {
             "last_event_id": event_id,
             "last_event_type": payload.get("event_type"),
@@ -64,9 +67,8 @@ def process_event(event: Dict[str, Any], context: Any) -> None:
         logger.error("Evento inválido, faltan campos: %s", ", ".join(missing))
         return
 
-    transaction = db.transaction()
     try:
-        inserted = transaction.call(_store_event, payload)
+        inserted = _store_event(payload)
     except Exception as err:  # noqa: BLE001
         logger.error(
             "Error al persistir evento %s: %s",

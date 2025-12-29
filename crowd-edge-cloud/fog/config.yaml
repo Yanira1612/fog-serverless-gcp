@@ -1,6 +1,6 @@
 # Configuración para la simulación de eventos en el borde
-endpoint: "https://<cloud-run-url>/events"  # Reemplazar con URL de Cloud Run (no versionar productiva)
-api_key: "<api-key>"  # Inyectar via entorno para prod
+endpoint: "https://fog-ingestion-ceba1ca-5v357siqga-uc.a.run.app/events"  # Reemplazar con URL real de Cloud Run
+api_key: "fog-secret-123"
 
 # Modo de operación:
 # - simulated: genera eventos aleatorios (rápido para demo)
@@ -8,8 +8,8 @@ api_key: "<api-key>"  # Inyectar via entorno para prod
 mode: "camera"
 
 # Solo para modo camera
-camera_source: "http://<camera-ip>/video"            # 0 para webcam local, o URL rtsp/http
-camera_id: "cam-webcam-1"
+camera_source: "http://192.168.0.13:8080/video"            # 0 para webcam local, o URL rtsp/http
+camera_id: "cam-webcam-2"
 min_interval_seconds: 5    # anti-spam entre alertas
 
 # Para ambos modos
@@ -23,5 +23,5 @@ camera_ids:
   - "cam-parking"
 
 thresholds:
-  people_high: 50
-  rapid_accumulation: 20
+  people_high: 5
+  rapid_accumulation: 3
