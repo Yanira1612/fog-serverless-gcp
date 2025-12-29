@@ -70,9 +70,18 @@
     </div>
 
     <script>
-        const API_URL = 'https://fog-analyst-654276264702.us-central1.run.app/metrics';
+        const API_BASE = window.DASHBOARD_API_BASE || 'https://<analyst-url>';
+        const API_TOKEN = window.DASHBOARD_API_TOKEN || '<token>';
 
-        fetch(API_URL)
+        function withAuth(fetchUrl) {
+            return fetch(fetchUrl, {
+                headers: {
+                    'X-API-KEY': API_TOKEN
+                }
+            });
+        }
+
+        withAuth(`${API_BASE}/metrics`)
             .then(res => res.json())
             .then(data => {
                 // 1. KPIs
@@ -147,7 +156,7 @@
                 document.getElementById('current-state').innerText = latest;
 
                 if (latest !== "UNKNOWN") {
-                    fetch(`https://fog-analyst-654276264702.us-central1.run.app/predict_next?current_event=${latest}`)
+                    withAuth(`${API_BASE}/predict_next?current_event=${latest}`)
                         .then(res => res.json())
                         .then(pred => {
                             document.getElementById('predicted-event').innerText = pred.prediction;

@@ -1,73 +1,56 @@
 steps:
-  # Paso 1: construir la imagen del servicio de ingesta
+  # Paso 1: build de la imagen de ingesta
   - name: gcr.io/cloud-builders/docker
     args:
       - build
       - "-t"
-      - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:latest"
+      - "${_REGION}-docker.pkg.dev/${_PROJECT}/cloud-run-repo/fog-ingestion:${_TAG}"
       - "./services/ingest"
 
-  # Paso 2: publicar la imagen en Artifact Registry
+  # Paso 2: push a Artifact Registry
   - name: gcr.io/cloud-builders/docker
     args:
       - push
-      - "us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:latest"
+      - "${_REGION}-docker.pkg.dev/${_PROJECT}/cloud-run-repo/fog-ingestion:${_TAG}"
 
-  # Paso 3 (opcional): ejecutar Pulumi. 
-  - name: pulumi/pulumi-python
-    id: pulumi-apply
+  # Paso 3: deploy Cloud Run (solo ingesta HTTP)
+  - name: gcr.io/cloud-builders/gcloud
+    id: deploy-ingest
     entrypoint: sh
     args:
       - "-c"
       - |
         set -e
-        if [ "${_RUN_PULUMI}" != "true" ]; then
-          echo "Pulumi omitido (_RUN_PULUMI=${_RUN_PULUMI})."
-          exit 0
-        fi
-        export PATH=$$PATH:/root/.local/bin
-        mkdir -p infra/.pulumi-state
-        pulumi login file://$(pwd)/infra/.pulumi-state
-        pulumi stack select ${_STACK} --cwd infra --non-interactive || pulumi stack init ${_STACK} --cwd infra
-        pulumi config set gcp:project fog-serverless --cwd infra --non-interactive
-        pulumi config set gcp:region us-central1 --cwd infra --non-interactive
-        pulumi config set ingestApiKey "${_INGEST_API_KEY}" --cwd infra --non-interactive
-        cd infra
-        python3 -m pip install --user -r requirements.txt
-        pulumi up --yes
-    env:
-      - "PULUMI_CONFIG_PASSPHRASE="
-      - "_INGEST_API_KEY=${_INGEST_API_KEY}"
-      - "_STACK=${_STACK}"
-      - "_RUN_PULUMI=${_RUN_PULUMI}"
-    allowFailure: true
+        gcloud run deploy fog-ingestion \
+          --project "${_PROJECT}" \
+          --region "${_REGION}" \
+          --image "${_REGION}-docker.pkg.dev/${_PROJECT}/cloud-run-repo/fog-ingestion:${_TAG}" \
+          --platform managed \
+          --allow-unauthenticated \
+          --set-env-vars "PROJECT_ID=${_PROJECT},TOPIC_NAME=fog-events,INGEST_API_KEY=${_INGEST_API_KEY}"
 
-  # Paso 4 (opcional): desplegar la Cloud Function fog-processor
+  # Paso 4: deploy Cloud Function Gen2 (procesador Pub/Sub)
   - name: gcr.io/cloud-builders/gcloud
-    id: deploy-fog-processor
+    id: deploy-processor
     entrypoint: sh
     args:
       - "-c"
       - |
-        if [ "${_DEPLOY_FUNCTION}" != "true" ]; then
-          echo "Despliegue de función omitido (_DEPLOY_FUNCTION=${_DEPLOY_FUNCTION})."
-          exit 0
-        fi
+        set -e
         gcloud functions deploy fog-processor \
           --gen2 \
-          --region=us-central1 \
-          --project=fog-serverless \
+          --region="${_REGION}" \
+          --project="${_PROJECT}" \
           --runtime=python311 \
           --entry-point=process_event \
           --trigger-topic=fog-events \
-          --source=functions/processor || { echo "Despliegue de función falló (ignorando para no romper el build)."; exit 0; }
-    allowFailure: true
+          --source=functions/processor
 
 options:
   logging: CLOUD_LOGGING_ONLY
 
 substitutions:
-  _INGEST_API_KEY: "demo-api-key"
-  _STACK: "dev2"
-  _RUN_PULUMI: "true"
-  _DEPLOY_FUNCTION: "false"
+  _PROJECT: fog-serverless
+  _REGION: us-central1
+  _TAG: latest
+  _INGEST_API_KEY: "set-in-trigger"

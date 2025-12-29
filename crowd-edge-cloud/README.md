@@ -1,67 +1,69 @@
-# Crowd Edge Cloud – Detección de Aglomeraciones (Simulada)
+# Crowd Edge Cloud – Demo Fog + Serverless en GCP
 
-Proyecto académico que demuestra una arquitectura Fog + Serverless en GCP para ingestar y procesar eventos simulados de cámaras de borde. No incluye entrenamiento ni visión computacional real; el foco es la arquitectura, el flujo de eventos y la infraestructura como código.
+Proyecto academico que muestra una arquitectura Fog + Serverless para ingestar eventos simulados desde el borde, procesarlos en GCP y exponer metricas basicas para un dashboard.
 
-## Arquitectura
-- **Fog/Edge**: script Python (`fog/edge_app.py`) que simula eventos y los envía vía HTTP con API Key. Usa buffer local ante fallos de red.
-- **Ingesta (Cloud Run v1)**: servicio Flask (`services/ingest/main.py`) que valida API Key y publica en Pub/Sub.
-- **Bus de eventos (Pub/Sub)**: topic `fog-events` para desacoplar ingesta y procesamiento.
-- **Procesamiento (Cloud Functions 2nd gen)**: función (`functions/processor/main.py`) activada por Pub/Sub que aplica idempotencia, guarda estado por cámara y persiste eventos en Firestore.
-- **BaaS (Firestore)**: almacenamiento nativo para eventos y estado de cámaras.
-- **Dashboard/Analítica**: consultas de ejemplo (`dashboard/queries.sql`) y guía (`dashboard/README.md`) para Looker Studio/BigQuery.
-- **CI/CD**: pipeline en Cloud Build (`ci/cloudbuild.yaml`) que construye la imagen y ejecuta Pulumi (fuente de verdad de la infraestructura).
+## Arquitectura (simplificada y coherente)
+- **Fog/Edge**: `fog/edge_app.py` simula eventos (o usa camara local), aplica filtrado basico y buffer local ante fallos de red. No se envian videos ni datos pesados.
+- **Ingesta (Cloud Run)**: `services/ingest` expone `/events` con API key y publica en Pub/Sub (`fog-events`).
+- **Procesamiento (Cloud Functions Gen2 + Pub/Sub)**: `functions/processor` se activa por Pub/Sub, garantiza idempotencia y persiste en Firestore.
+- **BaaS (Firestore)**: colecciones `events` y `camera_state`.
+- **Analyst/Dashboard (Cloud Run protegido)**: `functions/analyst` expone `/metrics` y `/predict_next` con token simple. `dashboard/index.html` consume esas APIs con el token.
+- **Infra como codigo (Pulumi)**: crea Firestore, Pub/Sub y Cloud Run de ingesta/analyst parametrizados por stack.
+- **CI/CD (Cloud Build)**: build/push de imagen de ingesta, deploy a Cloud Run (ingesta) y deploy de Cloud Function (procesador). Pulumi se ejecuta fuera del pipeline.
 
-## Flujo de datos
-1) El fog simula eventos con `people_count`, tipo de evento y cámara; envía `POST /events` con header `X-API-KEY`.
-2) Cloud Run valida la API Key, publica en Pub/Sub y registra logs estructurados.
-3) Pub/Sub activa la Cloud Function, que asegura idempotencia y persiste en Firestore (`events`, `camera_state`).
-4) Los datos se pueden exportar a BigQuery para dashboards usando las consultas de ejemplo.
+## Despliegue rapido
+Requisitos: `gcloud` autenticado, `pulumi`, Docker, Python 3.11.
 
-## Seguridad de ingesta (fog → Cloud Run)
-- Autenticación simple por API Key en header `X-API-KEY`.
-- La API Key se inyecta como variable de entorno `INGEST_API_KEY` en Cloud Run (definirla con `pulumi config set ingestApiKey <valor>`).
-- El fog lee `api_key` desde `fog/config.yaml` y la envía en cada petición.
-
-## Cómo ejecutar la demo
-Requisitos: `pulumi`, `gcloud` autenticado contra `fog-serverless`, Docker, Python 3.11.
-
-1. **Construir y publicar la imagen de ingesta**
-   ```bash
-   cd crowd-edge-cloud
-   docker build -t us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:latest services/ingest
-   docker push us-central1-docker.pkg.dev/fog-serverless/cloud-run-repo/fog-ingestion:latest
-   ```
-2. **Configurar Pulumi (única fuente de verdad)**
+1. **Configurar Pulumi (infra base)**
    ```bash
    cd infra
-   pulumi stack init dev  # solo la primera vez
-   pulumi config set ingestApiKey TU_API_KEY
+   pulumi stack init dev   # solo primera vez
+   pulumi config set gcp:project <tu-proyecto>
+   pulumi config set gcp:region us-central1
+   pulumi config set --secret ingestApiKey <api-key-para-ingesta>
+   pulumi config set ingestImage <region>-docker.pkg.dev/<proyecto>/cloud-run-repo/fog-ingestion:latest
+   pulumi config set analystImage <region>-docker.pkg.dev/<proyecto>/cloud-run-repo/fog-analyst:latest
    pulumi up --yes
    ```
-   Pulumi crea/actualiza: topic `fog-events`, suscripción push a `/events` de `fog-ingestion`, Firestore nativo y Cloud Run apuntando a la imagen en Artifact Registry (sin modificar IAM de proyecto).
-3. **Desplegar la función de procesamiento**
+
+2. **Desplegar servicios de aplicacion**
    ```bash
-   gcloud functions deploy fog-processor \
-     --gen2 --region=us-central1 --project=fog-serverless \
-     --runtime=python311 --entry-point=process_event \
-     --trigger-topic=fog-events --source=functions/processor
+   cd ..
+   gcloud builds submit --config ci/cloudbuild.yaml \
+     --substitutions _PROJECT=<tu-proyecto>,_REGION=us-central1,_TAG=latest,_INGEST_API_KEY=<api-key-para-ingesta>
    ```
-4. **Ejecutar el simulador Fog**
+   - Cloud Run `fog-ingestion` queda publico (solo endpoint HTTP).
+   - Cloud Function `fog-processor` queda suscrita al topic `fog-events`.
+   - Cloud Run `fog-analyst` queda privado (usa token simple).
+
+3. **Ejecutar el simulador Fog**
    ```bash
    cd fog
    pip install -r requirements.txt
-   # Edita config.yaml: endpoint de Cloud Run (cloudRunUrl exportado por Pulumi) y api_key usada en Pulumi
+   export FOG_ENDPOINT="https://<cloud-run-url>/events"
+   export FOG_API_KEY="<api-key-para-ingesta>"
    python edge_app.py
    ```
-5. **Visualizar**
-   - Consulta la colección `events` en Firestore o expórtala a BigQuery.
-   - Usa `dashboard/queries.sql` y `dashboard/README.md` para Looker Studio/BigQuery.
 
-## CI/CD con Cloud Build
-- Pipeline en `ci/cloudbuild.yaml`: build → push → `pulumi up --yes`. No modifica IAM a nivel proyecto.
-- Ejecución manual: `gcloud builds submit --config ci/cloudbuild.yaml .`
+4. **Dashboard**
+   - Servir `dashboard/index.html` (p.ej. con un `python -m http.server`).
+   - Configurar variables JS en runtime: `window.DASHBOARD_API_BASE="<url-analyst>"` y `window.DASHBOARD_API_TOKEN="<token-analyst>"`.
 
-## Consideraciones
-- Eventos simulados; el modelo real se integrará después.
-_- No se envía video a la nube ni se hace reconocimiento facial._
-- Código y comentarios en español, orientado a un despliegue académico y rápido.
+## Seguridad (demo)
+- API key en ingesta (simple). Para prod: Identity Platform/IAP y/o Cloud Armor.
+- `ANALYST_API_TOKEN` protege `/metrics` y `/predict_next`.
+- Secretos via variables de entorno o Secret Manager (recomendado). No se versionan API keys ni URL productivas.
+- Solo la ingesta es publica; analyst/dash deben ir tras token/IAP.
+
+## CI/CD (Cloud Build)
+- **Incluye**: build/push imagen ingesta, deploy Cloud Run ingesta, deploy Cloud Function procesador.
+- **No incluye**: ejecucion de Pulumi (se corre manualmente cuando hay cambios de infra).
+- Pasos fallan en caso de error (sin `allowFailure`).
+
+## Six Pillars (resumen)
+- **Operational Excellence**: IaC con Pulumi, servicios desacoplados (ingesta/processor/analyst), logs estructurados.
+- **Security**: secretos fuera del codigo, API key en ingesta, token en analyst, posibilidad de IAP/Identity Platform y Cloud Armor.
+- **Reliability**: Pub/Sub desacopla, idempotencia en processor, buffer local en Fog, Firestore gestionado.
+- **Performance Efficiency**: serverless auto-escalable, carga minima en fog (solo eventos).
+- **Cost Optimization**: pago por uso (Cloud Run/Functions), topicos compartidos, sin VMs ni GPUs en la nube.
+- **Sustainability**: evita envio de video, procesamiento ligero en el borde, recursos serverless que escalan a cero.

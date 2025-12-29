@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 venv/
 .venv/
-.env
+# .env
 
 # --- Node / Javascript ---
 node_modules/

@@ -10,9 +10,14 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("fog-ingest")
 
 # Configuración de entorno (inyectadas por Pulumi en Cloud Run)
-PROJECT_ID = os.getenv("PROJECT_ID", "fog-serverless")
+PROJECT_ID = os.getenv("PROJECT_ID")
 TOPIC_NAME = os.getenv("TOPIC_NAME", "fog-events")
 INGEST_API_KEY = os.getenv("INGEST_API_KEY", "")
+
+if not PROJECT_ID:
+    raise RuntimeError("PROJECT_ID no definido")
+if not INGEST_API_KEY:
+    raise RuntimeError("INGEST_API_KEY no definido")
 
 app = Flask(__name__)
 
