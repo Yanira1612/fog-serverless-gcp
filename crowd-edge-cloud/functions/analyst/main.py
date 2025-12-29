@@ -1,9 +1,11 @@
 import logging
 import os
+import smtplib
 from collections import Counter
+from email.mime.text import MIMEText
 from typing import Dict, Optional
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, make_response
 from flask_cors import CORS
 from google.cloud import firestore
 
@@ -15,6 +17,8 @@ CORS(app)
 
 API_TOKEN = os.getenv("ANALYST_API_TOKEN")
 DB_NAME = os.getenv("DB_NAME")
+GMAIL_USER = os.environ.get("GMAIL_USER", "ysuniq@unsa.edu.pe")
+GMAIL_PASS = os.environ.get("GMAIL_PASS", "ewtm cyks jepw pmsv")
 
 try:
     db: Optional[firestore.Client] = firestore.Client(database=DB_NAME) if DB_NAME else firestore.Client()
@@ -42,6 +46,30 @@ def _safe_int(value: object) -> int:
         return 0
 
 
+def _send_email_alert(prediction: str, probability: float) -> None:
+    """Envia un correo simple cuando se detecta evento de crowd con alta probabilidad."""
+    if not GMAIL_USER or not GMAIL_PASS:
+        logger.debug("Correo no enviado: GMAIL_USER/GMAIL_PASS no configurados")
+        return
+    if "CROWD" not in prediction:
+        return
+
+    msg = MIMEText(
+        f"Alerta de Sistema Fog\n\nPredicción: {prediction}\nProbabilidad: {probability}%"
+    )
+    msg["Subject"] = "ALERTA: Probable Aglomeración"
+    msg["From"] = GMAIL_USER
+    msg["To"] = GMAIL_USER
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(GMAIL_USER, GMAIL_PASS)
+            server.sendmail(GMAIL_USER, [GMAIL_USER], msg.as_string())
+        logger.info("Correo de alerta enviado")
+    except Exception as err:  # noqa: BLE001
+        logger.error("Error enviando correo de alerta: %s", err)
+
+
 def _train_markov() -> Optional[Dict[str, list]]:
     """Modelo simple de transiciones por tipo de evento."""
     if not db:
@@ -61,6 +89,10 @@ def _train_markov() -> Optional[Dict[str, list]]:
 
 @app.before_request
 def enforce_auth() -> Optional[tuple]:
+    if request.method == "OPTIONS":
+        resp = make_response()
+        resp.status_code = 200  # permitir preflight sin auth
+        return resp
     if request.path in ("/health", "/"):
         return None
     if not _auth_ok():
@@ -152,6 +184,10 @@ def predict_next_event():
     possible = transitions[current_event]
     most_common = Counter(possible).most_common(1)[0]
     next_evt, prob = most_common[0], (most_common[1] / len(possible)) * 100
+
+    # Alerta opcional por correo si hay alto riesgo de aglomeración
+    if prob >= 70 and "CROWD" in next_evt:
+        _send_email_alert(next_evt, round(prob, 2))
 
     return jsonify(
         {
