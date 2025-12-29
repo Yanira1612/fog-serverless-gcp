@@ -25,3 +25,4 @@ Pulumi.*.yaml
 
 # --- OS ---
 .DS_Store
+crowd-edge-cloud/dashboard/a.py
